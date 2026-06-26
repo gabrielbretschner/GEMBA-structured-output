@@ -83,10 +83,14 @@ TEMPLATE_GEMBA_ESA_ERROR_SPANS = esa_fewshot([esa_few_shots['ende'], esa_few_sho
 
 # Instruction appended in each ESA re-annotation round (error-span stage only).
 REANNOTATION_INSTRUCTION_ESA = (
-    "Carefully review the source and translation again, together with the error spans "
-    "you identified above. Identify any errors you may have missed, and revise or remove "
-    "any spans that are incorrect. Then return the complete, updated list of error spans "
-    "using the same Major / Minor format."
+    "Carefully review the source and translation again, together with the error spans you "
+    "identified above. Re-examine every annotation and revise it on two axes:\n"
+    "1. Error span: correct the marked text where the span is wrong, too wide, or too "
+    "narrow.\n"
+    "2. Severity: reconsider whether each error is major or minor. Reserve major for errors "
+    "that genuinely disrupt understanding and use it sparingly — many errors are only minor.\n"
+    "Also add any errors you missed and remove any spans that are incorrect. Then return the "
+    "complete, updated list of error spans using the same Major / Minor format."
 )
 
 TEMPLATE_GEMBA_ESA_RANKING = 'Given the translation from {source_lang} to {target_lang} and the annotated error spans, assign a score on a continuous scale from 0 to 100. The scale has following reference points: 0="No meaning preserved", 33="Some meaning preserved", 66="Most meaning preserved and few grammar mistakes", up to 100="Perfect meaning and grammar".\n\nScore the following translation from {source_lang} source:\n```{source_seg}```\n{target_lang} translation:\n```{target_seg}```\nAnnotated error spans:\n```{error_spans}```\nScore (0-100): '

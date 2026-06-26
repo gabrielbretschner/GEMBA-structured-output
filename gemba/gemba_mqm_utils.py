@@ -24,11 +24,16 @@ def apply_template(template, data):
 # full source/translation and its previous annotations in the conversation, so
 # this stays generic (no per-segment formatting).
 REANNOTATION_INSTRUCTION_MQM = (
-    "Carefully review the source and translation again, together with the errors "
-    "you identified above. Identify any errors you may have missed, and revise or "
-    "remove any annotations that are incorrect. Then return the complete, updated "
-    "list of errors using the same Critical / Major / Minor format (write \"no-error\" "
-    "for any level with no errors)."
+    "Carefully review the source and translation again, together with the errors you "
+    "identified above. Re-examine every annotation and revise it on two axes:\n"
+    "1. Error span: correct the marked text where the span is wrong, too wide, or too "
+    "narrow.\n"
+    "2. Severity: reconsider whether each error is critical, major, or minor. Reserve "
+    "critical for errors that genuinely make the translation incomprehensible or unusable "
+    "and use it sparingly — most real errors are major or minor.\n"
+    "Also add any errors you missed and remove any annotations that are incorrect. Then "
+    "return the complete, updated list of errors using the same Critical / Major / Minor "
+    "format (write \"no-error\" for any level with no errors)."
 )
 
 
