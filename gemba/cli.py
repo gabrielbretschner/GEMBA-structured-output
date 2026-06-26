@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 
@@ -16,6 +17,8 @@ flags.DEFINE_boolean('list_mqm_errors', False, 'List MQM errors.')
 flags.DEFINE_string('api_version', None, 'API version for Azure OpenAI (overrides default).')
 flags.DEFINE_boolean('no_structured_output', False, 'Disable structured output (JSON schema response_format).')
 flags.DEFINE_string('base_url', None, 'Custom API base URL (e.g. http://localhost:11434 for Ollama).')
+flags.DEFINE_integer('reannotation_rounds', 0, 'Number of re-annotation rounds after the initial GEMBA round (GEMBA-MQM / GEMBA-ESA only).')
+flags.DEFINE_string('annotations_out', None, 'If set, write per-segment annotations and round trajectory as JSONL to this path.')
 
 def main(argv):
     assert FLAGS.source is not None, "Source file must be provided."
@@ -40,16 +43,28 @@ def main(argv):
 
     assert len(source) == len(hypothesis), "Source and hypothesis files must have the same number of lines."
 
+    need_details = FLAGS.annotations_out is not None or FLAGS.reannotation_rounds > 0
+
     answers = get_gemba_scores(
         source, hypothesis, FLAGS.source_lang, FLAGS.target_lang,
         FLAGS.method, FLAGS.model, FLAGS.list_mqm_errors,
         api_version=FLAGS.api_version,
         use_structured_output=not FLAGS.no_structured_output,
         base_url=FLAGS.base_url,
+        reannotation_rounds=FLAGS.reannotation_rounds,
+        details=need_details,
     )
 
-    for answer in answers:
-        print(answer)
+    if need_details:
+        if FLAGS.annotations_out is not None:
+            with open(FLAGS.annotations_out, 'w') as f:
+                for record in answers:
+                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        for record in answers:
+            print(record["score"])
+    else:
+        for answer in answers:
+            print(answer)
 
 
 def run():

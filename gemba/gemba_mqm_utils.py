@@ -19,6 +19,31 @@ def apply_template(template, data):
     else:
         raise ValueError(f"Unknown template type {type(template)}")
 
+
+# Instruction appended in each re-annotation round. The model already has the
+# full source/translation and its previous annotations in the conversation, so
+# this stays generic (no per-segment formatting).
+REANNOTATION_INSTRUCTION_MQM = (
+    "Carefully review the source and translation again, together with the errors "
+    "you identified above. Identify any errors you may have missed, and revise or "
+    "remove any annotations that are incorrect. Then return the complete, updated "
+    "list of errors using the same Critical / Major / Minor format (write \"no-error\" "
+    "for any level with no errors)."
+)
+
+
+def append_reannotation_turn(messages, prior_answer, instruction):
+    """Continue a chat conversation with the model's prior answer and a re-annotation request.
+
+    Returns a new list (the input ``messages`` is not mutated) with an ``assistant``
+    turn carrying the previous annotation and a ``user`` turn asking for a revision.
+    """
+    content = prior_answer if prior_answer is not None else ""
+    return list(messages) + [
+        {"role": "assistant", "content": content},
+        {"role": "user", "content": instruction},
+    ]
+
 def parse_broken_json(x):
     improved_translation = ""
     errors = defaultdict(list)

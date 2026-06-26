@@ -39,6 +39,16 @@ python -m gemba --source=source.txt --hypothesis=hypothesis.txt --source_lang=En
 
 The main recommended methods: `GEMBA-MQM` and `GEMBA-DA` with the model `gpt-4`.
 
+### Re-annotation rounds
+
+For `GEMBA-MQM` and `GEMBA-ESA` you can run the initial annotation and then a fixed number of re-annotation rounds. Each round continues the same conversation, showing the model its previous annotations and asking it to add missed errors and revise or remove incorrect ones; the final round's annotations are scored.
+
+```
+gemba --source=src.txt --hypothesis=hyp.txt --source_lang=English --target_lang=German --method="GEMBA-MQM" --model="gpt-4" --reannotation_rounds=2 --annotations_out=annotations.jsonl
+```
+
+`stdout` still prints one score per line. With `--annotations_out` (or any `reannotation_rounds > 0`), each segment also yields the final `annotation` and the full per-round `trajectory`, written as JSONL to the given path.
+
 ## Collecting and evaluating experiments for GEMBA-DA
 
 Get mt-metric-eval and download resources:
