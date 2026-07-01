@@ -133,6 +133,62 @@ class TestEsaReannotation:
         assert ESA_ROUNDS[1] in ranking_prompt
 
 
+class RecordingGptApi:
+    """Fake GptApi that records the kwargs of every bulk_request call."""
+
+    def __init__(self, ranking_answer="80", **kwargs):
+        self.ranking_answer = ranking_answer
+        self.calls = []
+
+    def bulk_request(self, df, model, parse, cache=None, max_tokens=None, response_format=None):
+        prompt = df.iloc[0]["prompt"]
+        stage = "ranking" if isinstance(prompt, str) else "error_spans"
+        self.calls.append({"stage": stage, "max_tokens": max_tokens, "response_format": response_format})
+        raw = self.ranking_answer if stage == "ranking" else "Major:\nno-error\nMinor:\nno-error"
+        return [{
+            "answer": parse(raw),
+            "temperature": 0,
+            "answer_id": 0,
+            "prompt": prompt,
+            "finish_reason": "stop",
+            "model": model,
+        } for _ in range(len(df))]
+
+
+class TestEsaRequestParameters:
+    """The ESA stages must carry a token budget, and the ranking stage a score schema."""
+
+    def _run_esa(self, use_structured_output=True):
+        fake = RecordingGptApi()
+        with patch.object(utils, "GptApi", return_value=fake), \
+             patch.object(utils.dc, "Cache", return_value=NoCache()):
+            utils.get_gemba_scores(
+                ["src1"], ["hyp1"], "English", "German", "GEMBA-ESA", "gpt-4",
+                use_structured_output=use_structured_output,
+            )
+        return fake
+
+    def test_stages_have_token_budget(self):
+        fake = self._run_esa()
+        spans_call = next(c for c in fake.calls if c["stage"] == "error_spans")
+        ranking_call = next(c for c in fake.calls if c["stage"] == "ranking")
+        assert spans_call["max_tokens"] == utils.ESA_ERROR_SPANS_MAX_TOKENS
+        assert ranking_call["max_tokens"] == utils.ESA_RANKING_MAX_TOKENS
+
+    def test_ranking_uses_score_schema_when_structured(self):
+        fake = self._run_esa(use_structured_output=True)
+        spans_call = next(c for c in fake.calls if c["stage"] == "error_spans")
+        ranking_call = next(c for c in fake.calls if c["stage"] == "ranking")
+        # Ranking gets the score schema; the free-form span stage stays schema-less.
+        assert ranking_call["response_format"] == utils.RESPONSE_FORMATS["score"]
+        assert spans_call["response_format"] is None
+
+    def test_ranking_no_schema_when_structured_disabled(self):
+        fake = self._run_esa(use_structured_output=False)
+        ranking_call = next(c for c in fake.calls if c["stage"] == "ranking")
+        assert ranking_call["response_format"] is None
+
+
 class TestUnsupportedMethod:
     def test_reannotation_rejected_for_da(self):
         import pytest

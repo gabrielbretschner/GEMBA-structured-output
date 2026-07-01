@@ -1,3 +1,5 @@
+import logging
+
 import pandas as pd
 import diskcache as dc
 from gemba.gpt_api import GptApi
@@ -14,6 +16,14 @@ from gemba.gemba_esa import (
     REANNOTATION_INSTRUCTION_ESA,
 )
 from gemba.prompt import prompts, validate_number
+
+logger = logging.getLogger(__name__)
+
+# Token budget for the two GEMBA-ESA stages. A budget (rather than None) lets
+# GptApi grow it and retry when a response is truncated, instead of silently
+# giving up and emitting an unscored (None -> NaN) segment.
+ESA_ERROR_SPANS_MAX_TOKENS = 1000
+ESA_RANKING_MAX_TOKENS = 500
 
 # Structured output schemas for OpenAI's response_format parameter.
 # These force models to return valid JSON matching the schema, avoiding
@@ -167,19 +177,38 @@ def get_gemba_scores(source, hypothesis, source_lang, target_lang, method, model
             for ann in raw
         ]
     elif method == "GEMBA-ESA":
+        # The ranking stage returns a single 0-100 number, so it can use the
+        # "score" JSON schema (honored on OpenAI/Azure). The error-span stage is
+        # free-form prose and stays schema-less. Both stages carry a token budget
+        # so a truncated response is retried rather than dropped.
+        esa_ranking_response_format = RESPONSE_FORMATS["score"] if use_structured_output else None
+        logger.info(
+            "GEMBA-ESA config: structured_output=%s, error_spans_max_tokens=%d, ranking_max_tokens=%d",
+            use_structured_output,
+            ESA_ERROR_SPANS_MAX_TOKENS,
+            ESA_RANKING_MAX_TOKENS,
+        )
         df["prompt"] = df.apply(lambda x: apply_template(TEMPLATE_GEMBA_ESA_ERROR_SPANS, x), axis=1)
         if reannotation_rounds == 0:
-            error_spans = gptapi.bulk_request(df, model, lambda x: x, cache=cache)
+            error_spans = gptapi.bulk_request(df, model, lambda x: x, cache=cache, max_tokens=ESA_ERROR_SPANS_MAX_TOKENS)
             final_spans = list(pd.DataFrame(error_spans)['answer'])
             trajectories = [[s] for s in final_spans]
         else:
             final_spans, trajectories = _run_annotation_rounds(
                 gptapi, df, model, REANNOTATION_INSTRUCTION_ESA, cache,
-                max_tokens=None, response_format=None, rounds=reannotation_rounds)
+                max_tokens=ESA_ERROR_SPANS_MAX_TOKENS, response_format=None, rounds=reannotation_rounds)
         df['error_spans'] = pd.Series(final_spans, index=df.index)
 
         df["prompt"] = df.apply(lambda x: apply_template(TEMPLATE_GEMBA_ESA_RANKING, x), axis=1)
-        scores = list(pd.DataFrame(gptapi.bulk_request(df, model, validate_number, cache=cache))['answer'])
+        scores = list(pd.DataFrame(
+            gptapi.bulk_request(
+                df, model, validate_number, cache=cache,
+                max_tokens=ESA_RANKING_MAX_TOKENS, response_format=esa_ranking_response_format,
+            )
+        )['answer'])
+        none_count = sum(1 for s in scores if s is None)
+        if none_count:
+            logger.warning("GEMBA-ESA: %d/%d segments produced no parseable score", none_count, len(scores))
         if not use_details:
             return scores
         return [

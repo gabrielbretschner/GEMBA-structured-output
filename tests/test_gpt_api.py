@@ -26,6 +26,18 @@ def ollama_api():
         return GptApi(base_url="http://localhost:11434")
 
 
+@pytest.fixture
+def azure_api():
+    """Create a GptApi instance configured for Azure OpenAI (is_azure=True)."""
+    env = {
+        "OPENAI_AZURE_ENDPOINT": "https://example.openai.azure.com/",
+        "OPENAI_AZURE_KEY": "azure-key",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        with patch("openai.AzureOpenAI"):
+            return GptApi()
+
+
 class TestRequestApiContentFilter:
     """Tests for content_filter and 4xx error handling in request_api."""
 
@@ -203,6 +215,79 @@ class TestNonOpenAIParameters:
         assert call_kwargs["n"] == 1
         assert call_kwargs["frequency_penalty"] == 0
         assert call_kwargs["presence_penalty"] == 0
+
+
+class TestAzureParameters:
+    """Azure OpenAI should be treated as OpenAI-family for request parameters."""
+
+    def test_azure_sets_is_azure_true(self, azure_api):
+        """The Azure endpoint path should flag is_azure and clear is_openai."""
+        assert azure_api.is_azure is True
+        assert azure_api.is_openai is False
+        assert azure_api.supports_openai_params is True
+
+    def test_azure_passes_response_format(self, azure_api):
+        """Azure should forward response_format (structured output), unlike custom endpoints."""
+        azure_api.client = MagicMock()
+        rf = {"type": "json_schema", "json_schema": {"name": "test"}}
+        azure_api.call_api("test prompt", "gpt-4.1", temperature=0, max_tokens=None, response_format=rf)
+        call_kwargs = azure_api.client.chat.completions.create.call_args[1]
+        assert call_kwargs["response_format"] == rf
+
+    def test_azure_includes_openai_specific_params(self, azure_api):
+        """Azure should include n, frequency_penalty, presence_penalty."""
+        azure_api.client = MagicMock()
+        azure_api.call_api("test prompt", "gpt-4.1", temperature=0, max_tokens=None)
+        call_kwargs = azure_api.client.chat.completions.create.call_args[1]
+        assert call_kwargs["n"] == 1
+        assert call_kwargs["frequency_penalty"] == 0
+        assert call_kwargs["presence_penalty"] == 0
+
+    def test_azure_uses_max_completion_tokens_for_new_models(self, azure_api):
+        """Azure gpt-4.1 should use max_completion_tokens like the OpenAI path."""
+        azure_api.client = MagicMock()
+        azure_api.call_api("test prompt", "gpt-4.1", temperature=0, max_tokens=500)
+        call_kwargs = azure_api.client.chat.completions.create.call_args[1]
+        assert "max_completion_tokens" in call_kwargs
+        assert "max_tokens" not in call_kwargs
+
+
+class TestTruncationHandling:
+    """Tests for the finish_reason != 'stop' (truncation) retry and cap."""
+
+    def _make_response(self, content, finish_reason):
+        choice = MagicMock()
+        choice.message.content = content
+        choice.finish_reason = finish_reason
+        response = MagicMock()
+        response.choices = [choice]
+        return response
+
+    def test_truncated_without_budget_returns_empty(self, gpt_api):
+        """A truncated response with no token budget returns [] (unscored)."""
+        gpt_api.call_api = MagicMock(return_value=self._make_response("partial", "length"))
+        assert gpt_api.request_api("prompt", "model", max_tokens=None) == []
+
+    def test_truncated_grows_budget_then_succeeds(self, gpt_api):
+        """A truncated response should retry with a larger budget and succeed."""
+        responses = [
+            self._make_response("partial", "length"),
+            self._make_response("42", "stop"),
+        ]
+        gpt_api.call_api = MagicMock(side_effect=responses)
+        answers = gpt_api.request_api("prompt", "model", max_tokens=500)
+        assert answers[0]["answer"] == "42"
+        # Second call must request more tokens than the first.
+        first_max = gpt_api.call_api.call_args_list[0][0][3]
+        second_max = gpt_api.call_api.call_args_list[1][0][3]
+        assert second_max > first_max
+
+    def test_persistent_truncation_hits_cap_and_returns_empty(self, gpt_api):
+        """If the response never finishes, growth stops at the cap and returns []."""
+        from gemba.gpt_api import MAX_OUTPUT_TOKENS
+
+        gpt_api.call_api = MagicMock(return_value=self._make_response("partial", "length"))
+        assert gpt_api.request_api("prompt", "model", max_tokens=MAX_OUTPUT_TOKENS) == []
 
 
 class TestThinkBlockStripping:
